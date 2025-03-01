@@ -1,8 +1,10 @@
-import torch
+import itertools
 import math
-import random
-import functools
+
+import numpy as np
+import torch
 from torch import nn
+from torch.autograd import Variable
 from torch.nn import functional as F
 
 from op import conv2d_gradfix
@@ -56,6 +58,7 @@ class Upsample(nn.Module):
 
         return out
 
+
 class Downsample(nn.Module):
     def __init__(self, kernel, factor=2):
         super().__init__()
@@ -98,7 +101,7 @@ class Blur(nn.Module):
 
 class EqualConv2d(nn.Module):
     def __init__(
-        self, in_channel, out_channel, kernel_size, stride=1, padding=0, bias=True
+            self, in_channel, out_channel, kernel_size, stride=1, padding=0, bias=True
     ):
         super().__init__()
 
@@ -136,7 +139,7 @@ class EqualConv2d(nn.Module):
 
 class EqualLinear(nn.Module):
     def __init__(
-        self, in_dim, out_dim, bias=True, bias_init=0, lr_mul=1, activation=None
+            self, in_dim, out_dim, bias=True, bias_init=0, lr_mul=1, activation=None
     ):
         super().__init__()
 
@@ -173,16 +176,16 @@ class EqualLinear(nn.Module):
 
 class ModulatedConv2d(nn.Module):
     def __init__(
-        self,
-        in_channel,
-        out_channel,
-        kernel_size,
-        style_dim,
-        demodulate=True,
-        upsample=False,
-        downsample=False,
-        blur_kernel=[1, 3, 3, 1],
-        fused=True,
+            self,
+            in_channel,
+            out_channel,
+            kernel_size,
+            style_dim,
+            demodulate=True,
+            upsample=False,
+            downsample=False,
+            blur_kernel=[1, 3, 3, 1],
+            fused=True,
     ):
         super().__init__()
 
@@ -336,14 +339,14 @@ class ConstantInput(nn.Module):
 
 class StyledConv(nn.Module):
     def __init__(
-        self,
-        in_channel,
-        out_channel,
-        kernel_size,
-        style_dim,
-        upsample=False,
-        blur_kernel=[1, 3, 3, 1],
-        demodulate=True,
+            self,
+            in_channel,
+            out_channel,
+            kernel_size,
+            style_dim,
+            upsample=False,
+            blur_kernel=[1, 3, 3, 1],
+            demodulate=True,
     ):
         super().__init__()
 
@@ -395,13 +398,13 @@ class ToRGB(nn.Module):
 
 class Generator(nn.Module):
     def __init__(
-        self,
-        size,
-        style_dim,
-        n_mlp,
-        channel_multiplier=2,
-        blur_kernel=[1, 3, 3, 1],
-        lr_mlp=0.01,
+            self,
+            size,
+            style_dim,
+            n_mlp,
+            channel_multiplier=2,
+            blur_kernel=[1, 3, 3, 1],
+            lr_mlp=0.01,
     ):
         super().__init__()
 
@@ -487,8 +490,8 @@ class Generator(nn.Module):
                 params += list(self.conv1.parameters())
                 params += list(self.to_rgb1.parameters())
             else:
-                params += list(self.convs[idx*2-2:idx*2].parameters())
-                params += list(self.to_rgbs[idx-1].parameters())
+                params += list(self.convs[idx * 2 - 2:idx * 2].parameters())
+                params += list(self.to_rgbs[idx - 1].parameters())
         return params
 
     def make_noise(self):
@@ -522,15 +525,15 @@ class Generator(nn.Module):
             return latent
 
     def forward(
-        self,
-        styles,
-        return_latents=False,
-        inject_index=None,
-        truncation=1,
-        truncation_latent=None,
-        input_is_latent=False,
-        noise=None,
-        randomize_noise=True,
+            self,
+            styles,
+            return_latents=False,
+            inject_index=None,
+            truncation=1,
+            truncation_latent=None,
+            input_is_latent=False,
+            noise=None,
+            randomize_noise=True,
     ):
 
         if noise is None:
@@ -564,7 +567,7 @@ class Generator(nn.Module):
 
         i = 1
         for conv1, conv2, noise1, noise2, to_rgb in zip(
-            self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
+                self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
         ):
             out = conv1(out, latent[:, i], noise=noise1)
             out = conv2(out, latent[:, i + 1], noise=noise2)
@@ -579,14 +582,14 @@ class Generator(nn.Module):
 
 class ConvLayer(nn.Sequential):
     def __init__(
-        self,
-        in_channel,
-        out_channel,
-        kernel_size,
-        downsample=False,
-        blur_kernel=[1, 3, 3, 1],
-        bias=True,
-        activate=True,
+            self,
+            in_channel,
+            out_channel,
+            kernel_size,
+            downsample=False,
+            blur_kernel=[1, 3, 3, 1],
+            bias=True,
+            activate=True,
     ):
         layers = []
 
@@ -673,7 +676,7 @@ class Discriminator(nn.Module):
             in_channel = out_channel
 
         self.convs = nn.ModuleList(convs)
-        self.layers = (1,3,4,5)
+        self.layers = (1, 3, 4, 5)
 
     def forward(self, input):
         output = []
@@ -826,9 +829,276 @@ class LocalisationNet(nn.Module):
         self.fc[-1].weight.data.zero_()
 
     def forward(self, x):
-        # view 类似于reshape, 但不会产生新数据
+        # view 类似于reshape, 但不会复制数据
         batch_size = x.shape[0]
         x = self.conv(x)
         x = x.view(-1, self.size)
         x = self.fc(x)
         return x.view(batch_size, -1, 2)
+
+
+# phi(x1, x2) = r^2 * log(r), where r = ||x1 - x2||_2
+def compute_partial_repr(input_points, control_points):
+    N = input_points.size(0)
+    M = control_points.size(0)
+    # pairwise_diff: [N, M, 2]
+    # pairwise_diff[i, j, :] = input_points[i] - control_points[j]
+    pairwise_diff = input_points.view(N, 1, 2) - control_points.view(1, M, 2)
+    # original implementation, very slow
+    # pairwise_dist = torch.sum(pairwise_diff ** 2, dim = 2) # square of distance
+    pairwise_diff_square = pairwise_diff * pairwise_diff
+    # pairwise_dist: [N, M]
+    pairwise_dist = pairwise_diff_square[:, :, 0] + pairwise_diff_square[:, :, 1]
+    # log(r ^ 2) = 2 * log(r)
+    # 0.5 * r ^ 2 * 2 * log(r) = r ^ 2 * log(r)
+    repr_matrix = 0.5 * pairwise_dist * torch.log(pairwise_dist)
+    # fix numerical error for 0 * log(0), substitute all nan with 0
+    mask = repr_matrix != repr_matrix
+    repr_matrix.masked_fill_(mask, 0)
+    return repr_matrix
+
+
+class TPSGridGenerator(nn.Module):
+    def __init__(self, target_control_points, target_height, target_width):
+        super().__init__()
+        N = target_control_points.shape[0]
+        self.num_points = N
+        self.height = target_height
+        self.width = target_width
+        target_control_points = target_control_points.float()
+
+        # create padded kernel matrix
+        forward_kernel = torch.zeros(N + 3, N + 3)
+        target_control_partial_repr = compute_partial_repr(target_control_points, target_control_points)
+        forward_kernel[:N, :N].copy_(target_control_partial_repr)
+        forward_kernel[:N, -3].fill_(1)
+        forward_kernel[-3, :N].fill_(1)
+        forward_kernel[:N, -2:].copy_(target_control_points)
+        # K   1 P
+        # 1^T 0 0
+        # p^T 0 0
+        forward_kernel[-2:, :N].copy_(target_control_points.transpose(0, 1))
+        # compute inverse matrix
+        inverse_kernel = torch.inverse(forward_kernel)
+
+        # create target coordinate matrix
+        HW = target_width * target_height
+        target_coordinate = list(itertools.product(range(target_height), range(target_width)))
+        target_coordinate = torch.Tensor(target_coordinate)  # HW x 2
+        Y, X = target_coordinate.split(1, dim=1)
+        Y = Y * 2 / (target_height - 1) - 1
+        X = X * 2 / (target_width - 1) - 1
+        # 将坐标归一化到[-1, 1]的范围内
+        # [HW, 2]
+        target_coordinate = torch.cat([X, Y], dim=1)  # convert from (y, x) to (x, y)
+        # [HW, N]
+        target_coordinate_partial_repr = compute_partial_repr(target_coordinate, target_control_points)
+        # [HW, N+3]
+        target_coordinate_repr = torch.cat([
+            target_coordinate_partial_repr, torch.ones(HW, 1), target_coordinate
+        ], dim=1)
+
+        # register precomputed matrices
+        self.register_buffer('inverse_kernel', inverse_kernel)
+        self.register_buffer('padding_matrix', torch.zeros(3, 2))
+        self.register_buffer('target_coordinate_repr', target_coordinate_repr)
+
+    def forward(self, source_control_points):
+        assert source_control_points.ndimension() == 3
+        assert source_control_points.size(1) == self.num_points
+        assert source_control_points.size(2) == 2
+        batch_size = source_control_points.size(0)
+
+        Y = torch.cat([source_control_points, Variable(self.padding_matrix.expand(batch_size, 3, 2))], dim=1)
+        # Y [batch_size, N+3, 2]
+        # Mapping_matrix [batch_size, N+3, 2] [W, a, b]^T
+        mapping_matrix = torch.matmul(Variable(self.inverse_kernel), Y)
+        # [batch_size, HW, 2]
+        source_coordinate = torch.matmul(Variable(self.target_coordinate_repr), mapping_matrix)
+        # s[:, i, j] 代表变化后的图的(y, x) 的值在原图中的坐标值
+        # 坐标值都归一化到 [-1, 1]
+        return source_coordinate.view(batch_size, self.height, self.width, 2)
+
+
+class TPSSpatialTransformerBlock(nn.Module):
+    def __init__(self, res, target_control_points, grid_size=10):
+        super().__init__()
+        nums = grid_size ** 2
+        kernel_size = [3 if res == 8 else 5, 5]
+        need_pool = [False if res == 8 else True, True]
+        self.target_control_points = target_control_points
+        self.loc_net = LocalisationNet(res=res, num_output=nums * 2, target_control_points=target_control_points,
+                                       kernel_size=kernel_size, need_pool=need_pool)
+        self.tps_grid_gen = TPSGridGenerator(target_control_points=target_control_points,
+                                             target_width=res, target_height=res)
+
+    def forward(self, x, alpha=1.):
+        batch_size = x.shape[0]
+        source_control_points = self.loc_net(x)
+        if alpha != 1.:
+            source = self.loc_net.bias.to(x.device).view(1, -1, 2).repeat(batch_size, 1, 1)
+            source_control_points = source * (1 - alpha) + source_control_points * alpha
+        grid = self.tps_grid_gen(source_control_points)
+        transformed_x = F.grid_sample(x, grid, padding_mode='reflection', align_corners=False)
+
+        return transformed_x, grid
+
+
+class TPSSpatialTransformer(nn.Module):
+    def __init__(self, grid_size=10, resolutions: list = None):
+        super().__init__()
+        assert isinstance(grid_size, int) or isinstance(grid_size, list)
+        if isinstance(grid_size, int):
+            grid_size = [grid_size] * len(resolutions)
+        if resolutions is None:
+            resolutions = [8 * (2 ** i) for i in range(4)]
+        self.resolutions = resolutions
+        r1 = r2 = 0.95
+
+        stns = []
+        for res, gs in zip(resolutions, grid_size):
+            target_control_points = torch.Tensor(list(itertools.product(
+                np.arange(-r1, r1 + 0.00001, 2.0 * r1 / (gs - 1)),
+                np.arange(-r2, r2 + 0.00001, 2.0 * r2 / (gs - 1)),
+            )))
+            stns.append(TPSSpatialTransformerBlock(res=res,
+                                                   target_control_points=target_control_points, grid_size=gs))
+
+        self.stns = nn.Sequential(*stns)
+
+
+class RTSpatialTransformerBlock(nn.Module):
+    def __init__(self, resolution=1024):
+        super().__init__()
+        self.channels = {
+            4: 512,
+            8: 512,
+            16: 512,
+            32: 512,
+            64: 512,
+            128: 256,
+            256: 128,
+            512: 64,
+            1024: 32,
+        }
+        in_channels = self.channels[resolution]
+        self.in_channels = in_channels
+        self.resolution = resolution
+        self.loc_net = nn.Sequential(
+            nn.Conv2d(in_channels, 16, kernel_size=5), nn.MaxPool2d(2, stride=2), nn.ReLU(True),
+            nn.Conv2d(16, 32, kernel_size=5), nn.MaxPool2d(2, stride=2), nn.ReLU(True)
+        )
+
+        self.fc_loc = nn.Sequential(
+            nn.Linear(self.get_size(), 32), nn.ReLU(True), nn.Linear(32, 6)
+        )
+        # 学习六个参数，来进行平移、旋转、缩放
+        self.fc_loc[2].weight.data.zero_()
+        self.fc_loc[2].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
+
+    def get_size(self):
+        x = torch.randn([1, self.in_channels, self.resolution, self.resolution])
+        b, c, h, w = self.loc_net(x).shape
+        return c * h * w
+
+    def forward(self, x):
+        xs = self.loc_net(x)
+        b, _, _, _ = x.shape
+        # 将矩阵展平
+        xs = xs.view(b, -1)
+        theta = self.fc_loc(xs)
+        # 2 * 3
+        theta = theta.view(-1, 2, 3)
+
+        grid = F.affine_grid(theta, x.shape, align_corners=False)
+        # grid: 该坐标对应之前的哪个坐标
+        x = F.grid_sample(x, grid, padding_mode='reflection', align_corners=False)
+        return x
+
+
+class RTSpatialTransformer(nn.Module):
+    def __init__(self, resolutions: list = None):
+        super().__init__()
+        if resolutions is None:
+            resolutions = [8 * (2 ** i) for i in range(4)]
+        self.resolutions = resolutions
+
+        stns = []
+        for res in resolutions:
+            stns.append(RTSpatialTransformerBlock(resolution=res))
+
+        self.stns = nn.Sequential(*stns)
+
+
+class DeformAwareGenerator(Generator):
+    def __init__(self, size, style_dim, n_mlp, channel_multiplier=2, resolutions: list = None,
+                 rt_resolutions: list = None):
+        super().__init__(size=size, style_dim=style_dim, n_mlp=n_mlp, channel_multiplier=channel_multiplier)
+        resolutions = [8 * (2 ** i) for i in range(4)] if resolutions is None else resolutions
+        rt_resolutions = [8 * (2 ** i) for i in range(4)] if rt_resolutions is None else rt_resolutions
+        self.resolutions = resolutions
+        self.n_stn = len(resolutions)
+        self.n_rtstn = len(rt_resolutions)
+
+    def forward(
+            self,
+            styles,
+            return_latents=False,
+            inject_index=None,
+            truncation=1,
+            truncation_latent=None,
+            input_is_latent=False,
+            noise=None,
+            randomize_noise=True,
+            stns=None,
+            rt_stns=None,
+            alpha=1.
+    ):
+        if noise is None:
+            if randomize_noise:
+                noise = [None] * self.num_layers
+            else:
+                noise = [getattr(self.noises, f"noise_{i}") for i in range(self.num_layers)]
+
+        if not input_is_latent:
+            styles = [self.style(s) for s in styles]
+            if truncation < 1:
+                style_t = []
+                for style in styles:
+                    style_t.append(truncation_latent + truncation * (style - truncation_latent))
+
+                styles = style_t
+            latent = styles[0].unsqueeze(1).repeat(1, self.n_latent, 1)
+        else:
+            latent = styles
+
+        out = self.input(latent)
+        out = self.conv1(out, latent[:, 0], noise=noise[0])
+        skip = self.to_rgb1(out, latent[:, 1])
+
+        i = 1
+        idx_stn = 0 if stns is None else - int(math.log2(stns.resolutions[0])) + 3
+        idx_rtstn = 0 if rt_stns is None else - int(math.log2(rt_stns.resolutions[0])) + 3
+        flows = []
+        for conv1, conv2, noise1, noise2, to_rgb in zip(
+                self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
+        ):
+            out = conv1(out, latent[:, i], noise=noise1)
+            out = conv2(out, latent[:, i + 1], noise=noise2)
+
+            if 0 <= idx_rtstn < self.n_rtstn and rt_stns is not None:
+                out = rt_stns.stns[idx_rtstn](out)
+
+            if 0 <= idx_stn < self.n_stn and stns is not None:
+                temp = stns.stns[idx_stn](out, alpha)
+                out, flow = temp
+                flows.append(flow)
+
+            idx_stn += 1
+            idx_rtstn += 1
+
+            skip = to_rgb(out, latent[:, i + 2], skip)
+            i += 2
+
+        image = skip
+        return image, flows
