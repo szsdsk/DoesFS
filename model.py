@@ -232,6 +232,7 @@ class ModulatedConv2d(nn.Module):
         )
 
     def forward(self, input, style):
+        # 获得输入图像的维度
         batch, in_channel, height, width = input.shape
 
         if not self.fused:
@@ -263,10 +264,16 @@ class ModulatedConv2d(nn.Module):
 
             return out
 
+        # style(batch_size, 1, 512) => style(batch_size, 1, in_channel) => (batch_size, 1, in_channel, 1, 1)
         style = self.modulation(style).view(batch, 1, in_channel, 1, 1)
+        # self.weight = (1, out_channel, in_channel, kernel_size, kernel_size)
+        # weight = (batch_size, out_channel, in_channel, kernel_size, kernel_size)
+        # mod 调制
+        # W_ijk = si * W_ijk
         weight = self.scale * self.weight * style
 
         if self.demodulate:
+            # demod 解调
             demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
             weight = weight * demod.view(batch, self.out_channel, 1, 1, 1)
 
@@ -381,6 +388,7 @@ class ToRGB(nn.Module):
         if upsample:
             self.upsample = Upsample(blur_kernel)
 
+        # 将输入feature map的channel变为3（即rgb三通道图），kernel_size=1x1，不变空间维度
         self.conv = ModulatedConv2d(in_channel, 3, 1, style_dim, demodulate=False)
         self.bias = nn.Parameter(torch.zeros(1, 3, 1, 1))
 
@@ -421,6 +429,7 @@ class Generator(nn.Module):
                 )
             )
 
+        # 将 z 空间映射到w空间
         self.style = nn.Sequential(*layers)
 
         self.channels = {
@@ -435,30 +444,39 @@ class Generator(nn.Module):
             1024: 16 * channel_multiplier,
         }
 
+        # batch_size * 512 * 4 * 4
         self.input = ConstantInput(self.channels[4])
+        # styledConv = ModulatedConv2d + noise
         self.conv1 = StyledConv(
             self.channels[4], self.channels[4], 3, style_dim, blur_kernel=blur_kernel
         )
         self.to_rgb1 = ToRGB(self.channels[4], style_dim, upsample=False)
 
+        # size 是目标图的形状
         self.log_size = int(math.log(size, 2))
+        # 从 4 * 4 开始，大小每乘2，需要加两个卷积层（一个上采样卷积，一个普通卷积），然后初始层1个
         self.num_layers = (self.log_size - 2) * 2 + 1
 
         self.convs = nn.ModuleList()
-        self.upsamples = nn.ModuleList()
+        # self.upsamples = nn.ModuleList()
         self.to_rgbs = nn.ModuleList()
         self.noises = nn.Module()
 
         in_channel = self.channels[4]
 
         for layer_idx in range(self.num_layers):
+            #  # 2,3,3,4,4,5,5,...,10,10
             res = (layer_idx + 5) // 2
+            # 17层对应4x4~1024x1024共9种分辨率
             shape = [1, 1, 2 ** res, 2 ** res]
+            # 高斯分布采(1,1,h,w)大小的噪声，每层对应存下
             self.noises.register_buffer(f"noise_{layer_idx}", torch.randn(*shape))
 
         for i in range(3, self.log_size + 1):
+            # 从8x8到目标分辨率
             out_channel = self.channels[2 ** i]
 
+            # 一个上采样卷积层（upsample = True），将特征图分辨率加倍。
             self.convs.append(
                 StyledConv(
                     in_channel,
@@ -470,19 +488,21 @@ class Generator(nn.Module):
                 )
             )
 
+            # 一个普通卷积层，进一步处理特征。
             self.convs.append(
                 StyledConv(
                     out_channel, out_channel, 3, style_dim, blur_kernel=blur_kernel
                 )
             )
 
+            # 一个ToRGB层，生成该分辨率的RGB图像。
             self.to_rgbs.append(ToRGB(out_channel, style_dim))
 
             in_channel = out_channel
 
         self.n_latent = self.log_size * 2 - 2
 
-    # added
+    # 返回指定层的参数
     def get_special_params(self, ids):
         params = []
         for idx in ids:
@@ -494,6 +514,8 @@ class Generator(nn.Module):
                 params += list(self.to_rgbs[idx - 1].parameters())
         return params
 
+    # 作用: 生成一组随机噪声张量，用于在前向传播中注入到每一层。
+    # 细节: 从4x4开始，每级分辨率生成两个噪声张量（对应两个卷积层）。
     def make_noise(self):
         device = self.input.input.device
 
@@ -508,14 +530,17 @@ class Generator(nn.Module):
     @torch.no_grad()
     def mean_latent(self, n_latent):
         # print(self.input.input.device)
+        # 随机采18x512的噪声
         latent_in = torch.randn(
             n_latent, self.style_dim, device=self.input.input.device
         )
+        # 先将噪声映射为隐层码w，再取平均得到1x512的结果
         latent = self.style(latent_in).mean(0, keepdim=True)
 
         return latent
 
     def get_latent(self, input, truncation=1., truncation_latent=None):
+        # z 空间映射到w空间
         latent = self.style(input)
         if truncation < 1:
             # y = y + truncation * (x - y)
@@ -538,39 +563,55 @@ class Generator(nn.Module):
 
         if noise is None:
             if randomize_noise:
+                # noise是一个长度为17的空值列表
                 noise = [None] * self.num_layers
             else:
                 noise = [
+                    # noise取Generator初始化时17个从高斯分布采的(1,1,hi,wi)大小的噪声组成列表
                     getattr(self.noises, f"noise_{i}") for i in range(self.num_layers)
                 ]
 
         if not input_is_latent:
+            # z -> w
             styles = [self.style(s) for s in styles]
 
+            # 该操作使得latent code w在平均值附近，生图质量不会太糟
             if truncation < 1:
                 style_t = []
 
                 for style in styles:
                     style_t.append(
+                        # truncation_latent: 平均值
                         truncation_latent + truncation * (style - truncation_latent)
                     )
 
                 styles = style_t
+            # w -> w+
             latent = styles[0].unsqueeze(1).repeat(1, self.n_latent, 1)
         else:
             latent = styles
+        # style mixing：可视化出了不同分辨率下style控制的属性差异、并且提供了一种属性融合方式。有2组latent code w1和w2，
+        # 分别生成source图A和source图B，style mixing就是在生成主支网络中选择一个交叉点，交叉点前的低分辨率合成使用w1控制，
+        # 交叉点之后的高分辨率合成使用w2，这样最终得到的图像则融合了图A和图B的特征。根据交叉点位置的不同，可以得到不同的融合结果。
 
+        # 得到常量
         out = self.input(latent)
+
+        # 只用第0个
         out = self.conv1(out, latent[:, 0], noise=noise[0])
 
         skip = self.to_rgb1(out, latent[:, 1])
 
         i = 1
+        # 上采样、正常卷积、噪声、to_rgb
         for conv1, conv2, noise1, noise2, to_rgb in zip(
                 self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
         ):
+            # 1, 3, 5, 7, ...
             out = conv1(out, latent[:, i], noise=noise1)
+            # 2, 4, 6, 8, ...
             out = conv2(out, latent[:, i + 1], noise=noise2)
+            # 3, 5, 7, 9, ...
             skip = to_rgb(out, latent[:, i + 2], skip)
 
             i += 2
