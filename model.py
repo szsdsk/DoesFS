@@ -992,12 +992,14 @@ class TPSSpatialTransformer(nn.Module):
         if isinstance(grid_size, int):
             grid_size = [grid_size] * len(resolutions)
         if resolutions is None:
+            # 8, 16, 32, 64
             resolutions = [8 * (2 ** i) for i in range(4)]
         self.resolutions = resolutions
         r1 = r2 = 0.95
 
         stns = []
         for res, gs in zip(resolutions, grid_size):
+            # 100 个点
             target_control_points = torch.Tensor(list(itertools.product(
                 np.arange(-r1, r1 + 0.00001, 2.0 * r1 / (gs - 1)),
                 np.arange(-r2, r2 + 0.00001, 2.0 * r2 / (gs - 1)),
