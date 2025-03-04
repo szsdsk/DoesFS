@@ -4,3 +4,4 @@
 main.py
 checkpoints/
 checkpoints/*
+op/__pycache__/
