@@ -6,6 +6,7 @@ import os
 import time
 import datetime
 import numpy as np
+import wandb
 from tqdm import tqdm
 from torch import nn, optim, autograd
 from torch.nn import functional as F
@@ -37,7 +38,7 @@ def d_r1_loss(real_pred, real_img):
     return grad_penalty
 
 
-def g_nonsaturation_loss(fake_pred):
+def g_nonsaturating_loss(fake_pred):
     loss = F.softplus(-fake_pred).mean()
     return loss
 
@@ -112,7 +113,7 @@ if __name__ == '__main__':
     rt_warp_resolutions = tps_warp_resolutions = str2list(args.warp_res)
     warp_grid_sizes = str2list(args.warp_gs)
     latent_dim = 512
-    mean_patch_length = 0
+    mean_path_length = 0
 
     transform = transforms.Compose([transforms.Resize((args.img_res, args.img_res)),
                                     transforms.ToTensor(),
@@ -177,8 +178,8 @@ if __name__ == '__main__':
         params_d.append({'params': rt_stns.parameters(), 'lr': args.rtstn_lr})
 
     g_optim = optim.Adam(params_d, betas=(.1, 0.99))
-    d_optim = optim.Adam(discriminator.parameters(), lr=args.d_lr, betas=(0, 0.99))
-    e_optim = optim.Adam(extra.parameters(), lr=args.d_lr, betas=(0, 0.99))
+    d_optim = optim.Adam(discriminator.parameters(), lr=args.d_lr, betas=(0., 0.99))
+    e_optim = optim.Adam(extra.parameters(), lr=args.d_lr, betas=(0., 0.99))
 
     mode_cross = args.cross_mode
     mode_within = args.within_mode
@@ -243,7 +244,7 @@ if __name__ == '__main__':
     loss_dict = {}
     start_time = time.time()
 
-    for idx in range(num_iter):
+    for idx in tqdm(range(num_iter)):
 
         # 对辨别器微调
         requires_grad(generator, False)
@@ -276,8 +277,9 @@ if __name__ == '__main__':
         if d_regularize:
             real_img = ref_image.clone()
             real_img.requires_grad = True
-            real_pred = discriminator(real_img, extra, flag=1, p_ind=np.random.randint(0, 3))
+            real_pred = discriminator(real_img, extra=extra, flag=1, p_ind=np.random.randint(0, 3))
             real_pred = real_pred.view(real_img.size(0), -1)
+            real_pred = real_pred.mean(dim=1).unsqueeze(1)
 
             r1_loss = d_r1_loss(real_pred, real_img)
 
@@ -317,7 +319,7 @@ if __name__ == '__main__':
         img_g, warp_flows = generator(in_latent, input_is_latent=True, stns=stns, rt_stns=rt_stns)
         fake_pred = discriminator(img_g, extra=extra, flag=1, p_ind=np.random.randint(0, hp))
         # -log(D_patch(G(w))) 公式5
-        g_loss = g_nonsaturation_loss(fake_pred) * args.adv_wt
+        g_loss = g_nonsaturating_loss(fake_pred) * args.adv_wt
         loss_dict['g_loss'] = g_loss
 
         # cross-domain loss
@@ -362,16 +364,16 @@ if __name__ == '__main__':
         src_C2, tgt_C2 = [], []
         for sam in range(args.batch):
             with torch.no_grad():
-                sc = F.cosine_similarity(ref_src_ssim.view(-1), sam_src_ssim[sam].view(-1), dim=-1)
+                sc = F.cosine_similarity(ref_src_ssim.view(-1), sam_src_ssim[sam].view(-1), dim=0)
                 src_C2.append(sc)
-            tc = F.cosine_similarity(ref_tgt_ssim.view(-1), sam_tgt_ssim[sam].view(-1), dim=1)
+            tc = F.cosine_similarity(ref_tgt_ssim.view(-1), sam_tgt_ssim[sam].view(-1), dim=0)
             tgt_C2.append(tc)
         src_C2s = softmax(torch.stack(src_C2, dim=0))
         tgt_C2s = softmax(torch.stack(tgt_C2, dim=0))
 
-        mes2 = ((tgt_C2s - src_C2s) ** 2)
-        wt = torch.sqrt(mes2.detach()) / torch.max(torch.sqrt(mes2.detach))
-        within_loss2 = (mes2 * wt).mean() * args.a2agr_wt
+        mse2 = ((tgt_C2s - src_C2s) ** 2)
+        wt = torch.sqrt(mse2.detach()) / torch.max(torch.sqrt(mse2.detach()))
+        within_loss2 = (mse2 * wt).mean() * args.a2agr_wt
 
         # 论文中公式4
         within_loss = within_loss1 + within_loss2
