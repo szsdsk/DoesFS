@@ -149,6 +149,7 @@ class Splice:
                 # ssim [1, token_num-1, token_num-1]
                 ssim = self.get_ssim[mode](img.unsqueeze(0), layer_num=layer_num)
                 ssims.append(ssim)
+            # token_num - 1 = 785 - 1 = 784
             # ssims [1, (token_num-1) * len(layers), token_num-1]
             ssims = torch.cat(ssims, dim=1)
             self_sims.append(ssims)

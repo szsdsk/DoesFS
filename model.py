@@ -139,7 +139,7 @@ class EqualConv2d(nn.Module):
 
 class EqualLinear(nn.Module):
     def __init__(
-            self, in_dim, out_dim, bias=True, bias_init=0, lr_mul=1, activation=None
+            self, in_dim, out_dim, bias=True, bias_init=0, lr_mul=1., activation=None
     ):
         super().__init__()
 
@@ -472,6 +472,7 @@ class Generator(nn.Module):
             # 高斯分布采(1,1,h,w)大小的噪声，每层对应存下
             self.noises.register_buffer(f"noise_{layer_idx}", torch.randn(*shape))
 
+        # (3, 10)
         for i in range(3, self.log_size + 1):
             # 从8x8到目标分辨率
             out_channel = self.channels[2 ** i]
@@ -666,6 +667,7 @@ class ConvLayer(nn.Sequential):
         super().__init__(*layers)
 
 
+# 每次都会让h和w减半
 class ResBlock(nn.Module):
     def __init__(self, in_channel, out_channel, blur_kernel=[1, 3, 3, 1]):
         super().__init__()
@@ -747,6 +749,7 @@ class DiscriminatorPatch(nn.Module):
             1024: 16 * channel_multiplier,
         }
 
+        # (3, 32)
         convs = [ConvLayer(3, channels[size], 1)]
 
         log_size = int(math.log(size, 2))
@@ -754,6 +757,8 @@ class DiscriminatorPatch(nn.Module):
         in_channel = channels[size]
 
         for i in range(log_size, 2, -1):
+            # (32, 64) (64, 128) (128, 256) (256, 512) (512, 512)
+            # (512, 512) (512, 512)
             out_channel = channels[2 ** (i - 1)]
 
             convs.append(ResBlock(in_channel, out_channel, blur_kernel))
@@ -776,11 +781,16 @@ class DiscriminatorPatch(nn.Module):
         feat = []
         for i in range(len(self.convs)):
             if i == 0:
+                # 1024
                 inp = self.convs[i](inp)
             else:
+                # 1024, 512, 256, 128
                 temp1 = self.convs[i].conv1(inp)
+                # batch_size, channel, h, w
+                # 当channel == 512 && h == 16 or 32
                 if (flag > 0) and (temp1.shape[1] == 512) and (temp1.shape[2] == 32 or temp1.shape[2] == 16):
                     feat.append(temp1)
+                # 512, 256, 128,
                 temp2 = self.convs[i].conv2(temp1)
                 if (flag > 0) and (temp2.shape[1] == 512) and (temp2.shape[2] == 32 or temp2.shape[2] == 16):
                     feat.append(temp2)
@@ -1080,6 +1090,7 @@ class DeformAwareGenerator(Generator):
         resolutions = [8 * (2 ** i) for i in range(4)] if resolutions is None else resolutions
         rt_resolutions = [8 * (2 ** i) for i in range(4)] if rt_resolutions is None else rt_resolutions
         self.resolutions = resolutions
+        # len = 2
         self.n_stn = len(resolutions)
         self.n_rtstn = len(rt_resolutions)
 
@@ -1120,6 +1131,7 @@ class DeformAwareGenerator(Generator):
         skip = self.to_rgb1(out, latent[:, 1])
 
         i = 1
+        # [32, 64]
         idx_stn = 0 if stns is None else - int(math.log2(stns.resolutions[0])) + 3
         idx_rtstn = 0 if rt_stns is None else - int(math.log2(rt_stns.resolutions[0])) + 3
         flows = []

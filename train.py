@@ -3,6 +3,9 @@ import math
 import torch
 import warnings
 import os
+import time
+import datetime
+import numpy as np
 from tqdm import tqdm
 from torch import nn, optim, autograd
 from torch.nn import functional as F
@@ -116,6 +119,7 @@ if __name__ == '__main__':
                                     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
     # 初始化 generator and discriminator
+    # original_generator: 冻住的generator
     original_generator = DeformAwareGenerator(args.img_res, latent_dim, 8, 2, resolutions=tps_warp_resolutions,
                                               rt_resolutions=rt_warp_resolutions).to(device).eval()
     ckpt = torch.load(args.ckpt, map_location=lambda storage, loc: storage)
@@ -220,9 +224,205 @@ if __name__ == '__main__':
 
     del loss_lpips, optimizer
 
+    # training
+    with torch.no_grad():
+        # for cross-domain loss (cross)
+        ref_src_feat = splice.calculate_features(real_image, mode=mode_cross, layers=vit_layer_id_cross)
+        ref_tgt_feat = splice.calculate_features(style_image, mode=mode_cross, layers=vit_layer_id_cross)
+        # feats [1, (token_num - 1) * len(layers), feature_num]
+        ref_src_feat /= ref_src_feat.norm(dim=[1, 2], keepdim=True)
+        ref_tgt_feat /= ref_tgt_feat.norm(dim=[1, 2], keepdim=True)
+        d_ref = ref_tgt_feat - ref_src_feat
+        d_ref_norm = d_ref / d_ref.norm(dim=[1, 2], keepdim=True)
+        d_ref_norm = d_ref_norm.repeat(args.batch, 1, 1)
 
+        # for in-domain loss (within)
+        ref_src_ssim = splice.calculate_self_sim(real_image, mode=mode_within, layers=vit_layer_id_within)
+        ref_tgt_ssim = splice.calculate_self_sim(style_image, mode=mode_within, layers=vit_layer_id_within)
 
+    loss_dict = {}
+    start_time = time.time()
 
+    for idx in range(num_iter):
 
+        # 对辨别器微调
+        requires_grad(generator, False)
+        requires_grad(stns, False)
+        requires_grad(rt_stns, False)
+        requires_grad(discriminator, True)
+        requires_grad(extra, True)
 
+        with torch.no_grad():
+            # sample_w: [batch, 18,latent_dim]
+            sample_w = generator.get_latent(torch.randn([args.batch, latent_dim]).to(device)).unsqueeze(1).repeat(1, generator.n_latent, 1)
+            fake_img, _ = generator(sample_w, input_is_latent=True, stns=stns, rt_stns=rt_stns)
 
+        # fake_pred => 0, real_pred => 1
+        fake_pred = discriminator(fake_img, extra=extra, flag=1, p_ind=np.random.randint(0, hp))
+        real_pred = discriminator(ref_image, extra=extra, flag=1, p_ind=np.random.randint(0, hp))  # one-shot
+
+        d_loss = d_logistic_loss(real_pred, fake_pred)
+        loss_dict['d_loss'] = d_loss
+
+        d_optim.zero_grad()
+        e_optim.zero_grad()
+        d_loss.backward()
+        d_optim.step()
+        e_optim.step()
+
+        del d_loss
+
+        d_regularize = idx % 10 == 0
+        if d_regularize:
+            real_img = ref_image.clone()
+            real_img.requires_grad = True
+            real_pred = discriminator(real_img, extra, flag=1, p_ind=np.random.randint(0, 3))
+            real_pred = real_pred.view(real_img.size(0), -1)
+
+            r1_loss = d_r1_loss(real_pred, real_img)
+
+            discriminator.zero_grad()
+            extra.zero_grad()
+
+            (10 / 2 * r1_loss * 10 +
+             0 * real_pred[0]).backward()
+
+            d_optim.step()
+            e_optim.step()
+            loss_dict['r1'] = r1_loss
+            del r1_loss
+
+        # 对生成器微调
+        requires_grad(generator, True)
+        requires_grad(stns, True)
+        requires_grad(rt_stns, True)
+        requires_grad(discriminator, False)
+        requires_grad(extra, False)
+
+        with torch.no_grad():
+            in_latent = generator.get_latent(torch.randn([args.batch, latent_dim]).to(device)).unsqueeze(1).repeat(1, generator.n_latent, 1)
+
+        with torch.no_grad():
+            in_latent_src = in_latent.clone()
+            # color align
+            in_latent_src[:, swap] = exp_latent_src[:, swap]
+            sam_src_img, _ = original_generator(in_latent_src, input_is_latent=True)
+
+        in_latent_tgt = in_latent.clone()
+        in_latent_tgt[:, swap] = exp_latent_tgt[:, swap]
+        img, warp_flows1 = generator(in_latent_tgt, input_is_latent=True, stns=stns, rt_stns=rt_stns)
+
+        # adv loss
+        # 都是 batch_size 张图片
+        img_g, warp_flows = generator(in_latent, input_is_latent=True, stns=stns, rt_stns=rt_stns)
+        fake_pred = discriminator(img_g, extra=extra, flag=1, p_ind=np.random.randint(0, hp))
+        # -log(D_patch(G(w))) 公式5
+        g_loss = g_nonsaturation_loss(fake_pred) * args.adv_wt
+        loss_dict['g_loss'] = g_loss
+
+        # cross-domain loss
+        with torch.no_grad():
+            sam_src_feat_ = splice.calculate_features(sam_src_img, mode=mode_cross, layers=vit_layer_id_cross)
+            # feats [batch_size, (token_num - 1) * len(layers), feature_num]
+            sam_src_feat = sam_src_feat_ / sam_src_feat_.clone().norm(dim=[1, 2], keepdim=True)
+        sam_tgt_feat_ = splice.calculate_features(img, mode=mode_cross, layers=vit_layer_id_cross)
+        sam_tgt_feat = sam_tgt_feat_ / sam_tgt_feat_.clone().norm(dim=[1, 2], keepdim=True)
+
+        d_sam = sam_tgt_feat - sam_src_feat
+        d_sam_norm = d_sam / d_sam.norm(dim=[1, 2], keepdim=True)
+
+        # 论文中公式2
+        cross_loss = (1 - F.cosine_similarity(d_sam_norm.view(args.batch, -1), d_ref_norm.view(args.batch, -1)).mean()) * args.a2b_wt
+        loss_dict['cross'] = cross_loss
+
+        with torch.no_grad():
+            sam_src_ssim = splice.calculate_self_sim(sam_src_img, mode=mode_within, layers=vit_layer_id_within)
+        sam_tgt_ssim = splice.calculate_self_sim(img, mode=mode_within, layers=vit_layer_id_within)
+
+        # generated-generated pair
+        src_C1, tgt_C1 = [], []
+        for sam1 in range(args.batch):
+            for sam2 in range(sam1+1, args.batch):
+                with torch.no_grad():
+                    # 1568 * 784
+                    sc = F.cosine_similarity(sam_src_ssim[sam1].view(-1), sam_src_ssim[sam2].view(-1), dim=0)
+                src_C1.append(sc)
+                tc = F.cosine_similarity(sam_tgt_ssim[sam1].view(-1), sam_tgt_ssim[sam2].view(-1), dim=0)
+                tgt_C1.append(tc)
+
+        # (2016)
+        src_C1s = softmax(torch.stack(src_C1, dim=0))
+        tgt_C1s = softmax(torch.stack(tgt_C1, dim=0))
+
+        mse1 = ((tgt_C1s - src_C1s) ** 2)
+        wt = torch.sqrt(mse1.detach()) / torch.max(torch.sqrt(mse1.detach()))
+        within_loss1 = (mse1 * wt).mean() * args.a2agg_wt
+
+        # generated-reference pair
+        src_C2, tgt_C2 = [], []
+        for sam in range(args.batch):
+            with torch.no_grad():
+                sc = F.cosine_similarity(ref_src_ssim.view(-1), sam_src_ssim[sam].view(-1), dim=-1)
+                src_C2.append(sc)
+            tc = F.cosine_similarity(ref_tgt_ssim.view(-1), sam_tgt_ssim[sam].view(-1), dim=1)
+            tgt_C2.append(tc)
+        src_C2s = softmax(torch.stack(src_C2, dim=0))
+        tgt_C2s = softmax(torch.stack(tgt_C2, dim=0))
+
+        mes2 = ((tgt_C2s - src_C2s) ** 2)
+        wt = torch.sqrt(mes2.detach()) / torch.max(torch.sqrt(mes2.detach))
+        within_loss2 = (mes2 * wt).mean() * args.a2agr_wt
+
+        # 论文中公式4
+        within_loss = within_loss1 + within_loss2
+        loss_dict['within'] = within_loss
+
+        # warp reg
+        warp_loss = 0.
+        for flow in warp_flows:
+            warp_loss += warp_reg_loss(flow)
+        for flow in warp_flows1:
+            warp_loss += warp_reg_loss(flow)
+        # 论文中公式1
+        warp_loss *= args.warp_wt
+        loss_dict['warp_loss'] = warp_loss
+
+        loss = cross_loss + within_loss + warp_loss + g_loss
+        loss_dict['loss'] = loss
+        g_optim.zero_grad()
+        loss.backward()
+        g_optim.step()
+
+        del cross_loss, within_loss, warp_loss, g_loss
+
+        g_regularize = idx % 10 == 0
+        if g_regularize:
+
+            latents = generator.get_latent(
+                torch.randn([args.batch, latent_dim]).to(device)).unsqueeze(1).repeat(1, generator.n_latent, 1)
+            fake_img, _ = generator(latents, input_is_latent=True)
+
+            path_loss, mean_path_length, path_lengths = g_path_regularize(fake_img, latents, mean_path_length)
+
+            generator.zero_grad()
+            weighted_path_loss = 2 * 10 * path_loss
+            weighted_path_loss.backward()
+            g_optim.step()
+        # ema 更新模型
+        accumulate(g_ema, g_module, g_accum)
+        accumulate(stns_ema, stns, stn_accum)
+        accumulate(rt_stns_ema, rt_stns, stn_accum)
+
+        if (idx + 1) % 50 == 0:
+            print(f'[{idx + 1}/{num_iter}]', end=' ')
+            for k in loss_dict.keys():
+                print(f'{k}={loss_dict[k]:.8f},', end=' ')
+
+            elapsed = time.time() - start_time
+            elapsed = str(datetime.timedelta(seconds=elapsed))
+            print(f'Elapsed [{elapsed}]')
+
+    os.makedirs('./outputs/models', exist_ok=True)
+    torch.save({'g': g_ema.state_dict(),
+                'stns': stns_ema.state_dict(),
+                'rtstn': rt_stns_ema.state_dict()}, f'./outputs/models/{args.style}.pt')
