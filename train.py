@@ -104,6 +104,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     assert args.use_stn or args.tune_g, 'at least one of these two args to be `True`'
 
+    wandb.init(project='doesFs')
+
     device = args.device
     hp = args.hp
     num_iter = args.num_iter  # 500
@@ -391,6 +393,7 @@ if __name__ == '__main__':
 
         loss = cross_loss + within_loss + warp_loss + g_loss
         loss_dict['loss'] = loss
+        wandb.log(loss_dict)
         g_optim.zero_grad()
         loss.backward()
         g_optim.step()
@@ -424,6 +427,7 @@ if __name__ == '__main__':
             elapsed = str(datetime.timedelta(seconds=elapsed))
             print(f'Elapsed [{elapsed}]')
 
+    wandb.finish()
     os.makedirs('./outputs/models', exist_ok=True)
     torch.save({'g': g_ema.state_dict(),
                 'stns': stns_ema.state_dict(),
