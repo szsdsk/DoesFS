@@ -29,6 +29,9 @@ class VitExtractor:
         self.hook_handlers = []
         self.layers_dict = {}
         self.outputs_dict = {}
+        for key in VitExtractor.KEY_LIST:
+            self.layers_dict[key] = []
+            self.outputs_dict[key] = []
         self._init_hooks_data()
 
     def _init_hooks_data(self):

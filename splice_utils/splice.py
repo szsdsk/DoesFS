@@ -32,13 +32,12 @@ class Splice:
     # 提取图片最后一层的keys的自相似性矩阵
     def ssim(self, x):
         sims = []
-        for img in x:
-            img = self.denorm(img)
-            img = self.global_transform(img)
-            # 加一个batch_size
-            self_sim = self.extractor.get_keys_self_sim_from_input(img.unsqueeze(0), layer_num=11)
+        for a in x:
+            a = self.denorm(a)
+            a = self.global_transform(a)
+            self_sim = self.extractor.get_keys_self_sim_from_input(a.unsqueeze(0), layer_num=11)
             sims.append(self_sim)
-        sims = torch.cat(sims, 0)
+        sims = torch.cat(sims, dim=0)
         return sims
 
     # 用余弦相似度mse求loss
@@ -51,9 +50,9 @@ class Splice:
             a = self.global_transform(a)
             b = self.global_transform(b)
             with torch.no_grad():
-                target_self_sim = self.get_ssim[mode](a.unsqueeze(0), layer_num=layer_num)
-            self_sim = self.get_ssim[mode](b.unsqueeze(0), layer_num=layer_num)
-            loss += F.mse_loss(self_sim, target_self_sim)
+                target_keys_self_sim = self.get_ssim[mode](a.unsqueeze(0), layer_num=layer_num)
+            keys_ssim = self.get_ssim[mode](b.unsqueeze(0), layer_num=layer_num)
+            loss += F.mse_loss(keys_ssim, target_keys_self_sim)
         return loss
 
     # 直接用特征值计算mse loss

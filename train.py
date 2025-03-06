@@ -76,7 +76,7 @@ if __name__ == '__main__':
     parser.add_argument('--lpips_dir', type=str, default='checkpoints', help='location of lpips_loss models. Used alex')
     parser.add_argument('--img_res', type=int, default=1024)
     parser.add_argument('--num_iter', type=int, default=500)
-    parser.add_argument('--batch', type=int, default=4)
+    parser.add_argument('--batch', type=int, default=3)
     parser.add_argument('--warp_res', type=str, default='32,64')
     parser.add_argument('--warp_gs', type=str, default='10,10')
     parser.add_argument('--cross_mode', type=str, default='f')
@@ -344,38 +344,44 @@ if __name__ == '__main__':
         sam_tgt_ssim = splice.calculate_self_sim(img, mode=mode_within, layers=vit_layer_id_within)
 
         # generated-generated pair
-        src_C1, tgt_C1 = [], []
-        for sam1 in range(args.batch):
-            for sam2 in range(sam1+1, args.batch):
-                with torch.no_grad():
-                    # 1568 * 784
-                    sc = F.cosine_similarity(sam_src_ssim[sam1].view(-1), sam_src_ssim[sam2].view(-1), dim=0)
-                src_C1.append(sc)
-                tc = F.cosine_similarity(sam_tgt_ssim[sam1].view(-1), sam_tgt_ssim[sam2].view(-1), dim=0)
-                tgt_C1.append(tc)
+        # 防止出现 nan
+        if args.batch > 2:
+            src_C1, tgt_C1 = [], []
+            for sam1 in range(args.batch):
+                for sam2 in range(sam1+1, args.batch):
+                    with torch.no_grad():
+                        # 1568 * 784
+                        sc = F.cosine_similarity(sam_src_ssim[sam1].view(-1), sam_src_ssim[sam2].view(-1), dim=0)
+                    src_C1.append(sc)
+                    tc = F.cosine_similarity(sam_tgt_ssim[sam1].view(-1), sam_tgt_ssim[sam2].view(-1), dim=0)
+                    tgt_C1.append(tc)
 
-        # (2016)
-        src_C1s = softmax(torch.stack(src_C1, dim=0))
-        tgt_C1s = softmax(torch.stack(tgt_C1, dim=0))
+            src_C1s = softmax(torch.stack(src_C1, dim=0))
+            tgt_C1s = softmax(torch.stack(tgt_C1, dim=0))
 
-        mse1 = ((tgt_C1s - src_C1s) ** 2)
-        wt = torch.sqrt(mse1.detach()) / torch.max(torch.sqrt(mse1.detach()))
-        within_loss1 = (mse1 * wt).mean() * args.a2agg_wt
+            mse1 = ((tgt_C1s - src_C1s) ** 2)
+            wt = torch.sqrt(mse1.detach()) / torch.max(torch.sqrt(mse1.detach()))
+            within_loss1 = (mse1 * wt).mean() * args.a2agg_wt
+        else:
+            within_loss1 = 0
 
         # generated-reference pair
-        src_C2, tgt_C2 = [], []
-        for sam in range(args.batch):
-            with torch.no_grad():
-                sc = F.cosine_similarity(ref_src_ssim.view(-1), sam_src_ssim[sam].view(-1), dim=0)
-                src_C2.append(sc)
-            tc = F.cosine_similarity(ref_tgt_ssim.view(-1), sam_tgt_ssim[sam].view(-1), dim=0)
-            tgt_C2.append(tc)
-        src_C2s = softmax(torch.stack(src_C2, dim=0))
-        tgt_C2s = softmax(torch.stack(tgt_C2, dim=0))
+        if args.batch > 1:
+            src_C2, tgt_C2 = [], []
+            for sam in range(args.batch):
+                with torch.no_grad():
+                    sc = F.cosine_similarity(ref_src_ssim.view(-1), sam_src_ssim[sam].view(-1), dim=0)
+                    src_C2.append(sc)
+                tc = F.cosine_similarity(ref_tgt_ssim.view(-1), sam_tgt_ssim[sam].view(-1), dim=0)
+                tgt_C2.append(tc)
+            src_C2s = softmax(torch.stack(src_C2, dim=0))
+            tgt_C2s = softmax(torch.stack(tgt_C2, dim=0))
 
-        mse2 = ((tgt_C2s - src_C2s) ** 2)
-        wt = torch.sqrt(mse2.detach()) / torch.max(torch.sqrt(mse2.detach()))
-        within_loss2 = (mse2 * wt).mean() * args.a2agr_wt
+            mse2 = ((tgt_C2s - src_C2s) ** 2)
+            wt = torch.sqrt(mse2.detach()) / torch.max(torch.sqrt(mse2.detach()))
+            within_loss2 = (mse2 * wt).mean() * args.a2agr_wt
+        else:
+            within_loss2 = 0
 
         # 论文中公式4
         within_loss = within_loss1 + within_loss2
