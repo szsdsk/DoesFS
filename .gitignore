@@ -9,3 +9,6 @@ __pycache__/
 *.dat
 wandb/
 wandb/*
+back.py
+outputs/
+outputs/*
