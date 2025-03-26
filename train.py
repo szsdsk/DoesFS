@@ -76,7 +76,7 @@ if __name__ == '__main__':
     parser.add_argument('--lpips_dir', type=str, default='checkpoints', help='location of lpips_loss models. Used alex')
     parser.add_argument('--img_res', type=int, default=1024)
     parser.add_argument('--num_iter', type=int, default=500)
-    parser.add_argument('--batch', type=int, default=3)
+    parser.add_argument('--batch', type=int, default=4)
     parser.add_argument('--warp_res', type=str, default='32,64')
     parser.add_argument('--warp_gs', type=str, default='10,10')
     parser.add_argument('--cross_mode', type=str, default='f')
@@ -261,6 +261,7 @@ if __name__ == '__main__':
             fake_img, _ = generator(sample_w, input_is_latent=True, stns=stns, rt_stns=rt_stns)
 
         # fake_pred => 0, real_pred => 1
+        # [batch, 1, 32, 32]
         fake_pred = discriminator(fake_img, extra=extra, flag=1, p_ind=np.random.randint(0, hp))
         real_pred = discriminator(ref_image, extra=extra, flag=1, p_ind=np.random.randint(0, hp))  # one-shot
 

@@ -12,3 +12,6 @@ wandb/*
 back.py
 outputs/
 outputs/*
+run.py
+images/
+images/*

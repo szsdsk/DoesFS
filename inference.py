@@ -56,5 +56,6 @@ latent = latent.unsqueeze(0)
 
 # inference
 result, _ = generator(latent, input_is_latent=True, stns=stns, rt_stns=rt_stns, alpha=args.alpha)
-torchvision.utils.save_image(result, f'{output_dir}/{args.style}_{os.path.basename(args.input_image)}',
+os.makedirs(f'{output_dir}/{args.style}', exist_ok=True)
+torchvision.utils.save_image(result, f'{output_dir}/{args.style}/{args.style}_{os.path.basename(args.input_image)}',
                              normalize=True, value_range=(-1, 1))

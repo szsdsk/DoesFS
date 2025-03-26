@@ -131,12 +131,13 @@ def align_face(filepath, output_size=1024, enable_padding=True):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', type=str, default='./data/test_inputs/001.png')
-    parser.add_argument('--output', type=str, default='./outputs')
+    parser.add_argument('--output', type=str, default='./outputs/aligned')
     args = parser.parse_args()
 
     transform = transforms.Compose([transforms.Resize((1024, 1024)),
                                     transforms.ToTensor()])
     face_aligned = align_face(args.path)
     face_aligned = transform(face_aligned)
+    os.makedirs(args.output, exist_ok=True)
     torchvision.utils.save_image(face_aligned, os.path.join(args.output, os.path.basename(args.path)),
                                  normalize=True, value_range=(0, 1))
