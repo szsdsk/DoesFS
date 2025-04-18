@@ -50,11 +50,8 @@ def get_paired_image_paths(source_dir, target_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_folder', type=str, default='DoesFS')
-    parser.add_argument('--style', type=str, default='style1')
+    parser.add_argument('--style', type=str, default='style2')
     args = parser.parse_args()
-    source_dir = 'images/test_inputs'
-    target_dir = os.path.join('images', args.input_folder, args.style)
 
     ground_source = os.path.join('images/ground_truth', f'source{args.style[-1]}.png')
     ground_target = os.path.join('images/ground_truth', f'target{args.style[-1]}.png')
@@ -65,19 +62,25 @@ if __name__ == '__main__':
     target_feature /= target_feature.norm(dim=1)
     ground_d = target_feature - source_feature
     ground_d /= ground_d.norm(dim=1)
-    losses = []
-    total = 0.0
-    pairs = get_paired_image_paths(source_dir, target_dir)
-    for s, t in pairs:
-        source = get_features(s)
-        target = get_features(t)
-        source /= source.norm(dim=1)
-        target /= target.norm(dim=1)
-        d = target - source
-        d /= d.norm(dim=1)
-        losses.append(F.cosine_similarity(ground_d, d).item())
-        total += losses[-1]
-    print('average loss: ', Decimal(str(total / len(pairs))).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
+    inputs_folder = ['DoesFS', 'DiFa', 'jojoGAN', 'MTG', 'oneshotCLIP', 'jojoGAN_pair', 'MTG_pair']
+    for input_folder in inputs_folder:
+        source_dir = 'images/test_inputs'
+        target_dir = os.path.join('images', input_folder, args.style)
+        losses = []
+        total = 0.0
+        pairs = get_paired_image_paths(source_dir, target_dir)
+        for s, t in pairs:
+            source = get_features(s)
+            target = get_features(t)
+            source /= source.norm(dim=1)
+            target /= target.norm(dim=1)
+            d = target - source
+            d /= d.norm(dim=1)
+            losses.append(F.cosine_similarity(ground_d, d).item())
+            total += losses[-1]
+            losses[-1] = float(Decimal(str(losses[-1])).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
+        print(losses)
+        print(input_folder + ' average loss: ', Decimal(str(total / len(pairs))).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
 
 
 

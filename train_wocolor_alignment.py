@@ -99,7 +99,6 @@ if __name__ == '__main__':
     parser.add_argument('--stn_accum', type=float, default=0.995)
     parser.add_argument('--g_accum', type=float, default=0.5 ** (32 / (10 * 1000)))
     parser.add_argument('--hp', type=int, default=1)
-    parser.add_argument('--swap_layer', type=int, default=8)
 
     args = parser.parse_args()
     assert args.use_stn or args.tune_g, 'at least one of these two args to be `True`'
@@ -152,8 +151,6 @@ if __name__ == '__main__':
     softmax = nn.Softmax(dim=0)
     # 1 * 1 * 512 => 1 * 18 * 512
     mean_latent = original_generator.mean_latent(1).unsqueeze(0).repeat(1, original_generator.n_latent, 1)
-    # (8, 18)
-    swap = [i for i in range(args.swap_layer, original_generator.n_latent)]
 
     # load image (aligned)
     style_path = os.path.join('data/style_images_aligned', args.target)
@@ -310,11 +307,9 @@ if __name__ == '__main__':
         with torch.no_grad():
             in_latent_src = in_latent.clone()
             # color align
-            in_latent_src[:, swap] = exp_latent_src[:, swap]
             sam_src_img, _ = original_generator(in_latent_src, input_is_latent=True)
 
         in_latent_tgt = in_latent.clone()
-        in_latent_tgt[:, swap] = exp_latent_tgt[:, swap]
         img, warp_flows1 = generator(in_latent_tgt, input_is_latent=True, stns=stns, rt_stns=rt_stns)
 
         # adv loss

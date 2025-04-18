@@ -140,11 +140,6 @@ if __name__ == '__main__':
     # patch-level adversarial loss
     extra = Extra().to(device)
 
-    # deformation modules
-    stns = TPSSpatialTransformer(resolutions=tps_warp_resolutions, grid_size=warp_grid_sizes).to(device)
-    rt_stns = RTSpatialTransformer(resolutions=rt_warp_resolutions).to(device)
-    stns_ema = TPSSpatialTransformer(resolutions=tps_warp_resolutions, grid_size=warp_grid_sizes).to(device)
-    rt_stns_ema = RTSpatialTransformer(resolutions=rt_warp_resolutions).to(device)
 
     # Dino feature extractor
     splice = Splice(device=device)
@@ -174,10 +169,6 @@ if __name__ == '__main__':
     params_d = []
     if args.tune_g:
         params_d.append({'params': generator.parameters(), 'lr': args.g_lr})
-    if args.use_stn:
-        params_d.append({'params': stns.parameters(), 'lr': args.stn_lr})
-    if args.use_rtstn:
-        params_d.append({'params': rt_stns.parameters(), 'lr': args.rtstn_lr})
 
     g_optim = optim.Adam(params_d, betas=(.1, 0.99))
     d_optim = optim.Adam(discriminator.parameters(), lr=args.d_lr, betas=(0., 0.99))
@@ -250,15 +241,13 @@ if __name__ == '__main__':
 
         # 对辨别器微调
         requires_grad(generator, False)
-        requires_grad(stns, False)
-        requires_grad(rt_stns, False)
         requires_grad(discriminator, True)
         requires_grad(extra, True)
 
         with torch.no_grad():
             # sample_w: [batch, 18,latent_dim]
             sample_w = generator.get_latent(torch.randn([args.batch, latent_dim]).to(device)).unsqueeze(1).repeat(1, generator.n_latent, 1)
-            fake_img, _ = generator(sample_w, input_is_latent=True, stns=stns, rt_stns=rt_stns)
+            fake_img, _ = generator(sample_w, input_is_latent=True, stns=None, rt_stns=None)
 
         # fake_pred => 0, real_pred => 1
         # [batch, 1, 32, 32]
@@ -299,8 +288,6 @@ if __name__ == '__main__':
 
         # 对生成器微调
         requires_grad(generator, True)
-        requires_grad(stns, True)
-        requires_grad(rt_stns, True)
         requires_grad(discriminator, False)
         requires_grad(extra, False)
 
@@ -315,11 +302,11 @@ if __name__ == '__main__':
 
         in_latent_tgt = in_latent.clone()
         in_latent_tgt[:, swap] = exp_latent_tgt[:, swap]
-        img, warp_flows1 = generator(in_latent_tgt, input_is_latent=True, stns=stns, rt_stns=rt_stns)
+        img, warp_flows1 = generator(in_latent_tgt, input_is_latent=True, stns=None, rt_stns=None)
 
         # adv loss
         # 都是 batch_size 张图片
-        img_g, warp_flows = generator(in_latent, input_is_latent=True, stns=stns, rt_stns=rt_stns)
+        img_g, warp_flows = generator(in_latent, input_is_latent=True, stns=None, rt_stns=None)
         fake_pred = discriminator(img_g, extra=extra, flag=1, p_ind=np.random.randint(0, hp))
         # -log(D_patch(G(w))) 公式5
         g_loss = g_nonsaturating_loss(fake_pred) * args.adv_wt
@@ -422,8 +409,6 @@ if __name__ == '__main__':
             g_optim.step()
         # ema 更新模型
         accumulate(g_ema, g_module, g_accum)
-        accumulate(stns_ema, stns, stn_accum)
-        accumulate(rt_stns_ema, rt_stns, stn_accum)
 
         if (idx + 1) % 50 == 0:
             print(f'[{idx + 1}/{num_iter}]', end=' ')
@@ -436,6 +421,5 @@ if __name__ == '__main__':
 
     wandb.finish()
     os.makedirs('./outputs/models', exist_ok=True)
-    torch.save({'g': g_ema.state_dict(),
-                'stns': stns_ema.state_dict(),
-                'rtstn': rt_stns_ema.state_dict()}, f'./outputs/models/{args.style}.pt')
+    torch.save({'g': g_ema.state_dict()}, f'./outputs/models/{args.style}.pt')
+    

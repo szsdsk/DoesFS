@@ -21,27 +21,27 @@ if __name__ == '__main__':
     loss = lpips.LPIPS(net='vgg')
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_folder', type=str, default='DoesFS')
-    parser.add_argument('--style', type=str, default='style1')
+    parser.add_argument('--style', type=str, default='style2')
     args = parser.parse_args()
+    inputs_folder = ['DoesFS', 'DiFa', 'jojoGAN', 'MTG', 'oneshotCLIP', 'jojoGAN_pair', 'MTG_pair']
+    for input_folder in inputs_folder:
+        source_dir = 'images/test_inputs'
+        target_dir = os.path.join('images', input_folder, args.style)
 
-    source_dir = 'images/test_inputs'
-    target_dir = os.path.join('images', args.input_folder, args.style)
+        pairs = get_paired_image_paths(source_dir, target_dir)
+        losses = []
+        total = 0.0
+        print(pairs)
+        for source, target in pairs:
+            s = lpips.im2tensor(lpips.load_image(source))
+            t = lpips.im2tensor(lpips.load_image(target))
 
-    pairs = get_paired_image_paths(source_dir, target_dir)
-    losses = []
-    total = 0.0
-    for source, target in pairs:
-        s = lpips.im2tensor(lpips.load_image(source))
-        t = lpips.im2tensor(lpips.load_image(target))
-
-        current_loss = loss(s, t).item()
-        total += current_loss
-        current_loss = float(Decimal(str(current_loss)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
-        losses.append(current_loss)
-
-    print('losses: ', losses)
-    print('average loss: ', Decimal(str(total / len(pairs))).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
+            current_loss = loss(s, t).item()
+            total += current_loss
+            current_loss = float(Decimal(str(current_loss)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
+            losses.append(current_loss)
+        # print('losses: ', losses)
+        print(input_folder + ' average loss: ', Decimal(str(total / len(pairs))).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
 
 
 

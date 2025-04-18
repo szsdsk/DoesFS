@@ -344,50 +344,6 @@ if __name__ == '__main__':
             sam_src_ssim = splice.calculate_self_sim(sam_src_img, mode=mode_within, layers=vit_layer_id_within)
         sam_tgt_ssim = splice.calculate_self_sim(img, mode=mode_within, layers=vit_layer_id_within)
 
-        # generated-generated pair
-        # 防止出现 nan
-        if args.batch > 2:
-            src_C1, tgt_C1 = [], []
-            for sam1 in range(args.batch):
-                for sam2 in range(sam1+1, args.batch):
-                    with torch.no_grad():
-                        # 1568 * 784
-                        sc = F.cosine_similarity(sam_src_ssim[sam1].view(-1), sam_src_ssim[sam2].view(-1), dim=0)
-                    src_C1.append(sc)
-                    tc = F.cosine_similarity(sam_tgt_ssim[sam1].view(-1), sam_tgt_ssim[sam2].view(-1), dim=0)
-                    tgt_C1.append(tc)
-
-            src_C1s = softmax(torch.stack(src_C1, dim=0))
-            tgt_C1s = softmax(torch.stack(tgt_C1, dim=0))
-
-            mse1 = ((tgt_C1s - src_C1s) ** 2)
-            wt = torch.sqrt(mse1.detach()) / torch.max(torch.sqrt(mse1.detach()))
-            within_loss1 = (mse1 * wt).mean() * args.a2agg_wt
-        else:
-            within_loss1 = 0
-
-        # generated-reference pair
-        if args.batch > 1:
-            src_C2, tgt_C2 = [], []
-            for sam in range(args.batch):
-                with torch.no_grad():
-                    sc = F.cosine_similarity(ref_src_ssim.view(-1), sam_src_ssim[sam].view(-1), dim=0)
-                    src_C2.append(sc)
-                tc = F.cosine_similarity(ref_tgt_ssim.view(-1), sam_tgt_ssim[sam].view(-1), dim=0)
-                tgt_C2.append(tc)
-            src_C2s = softmax(torch.stack(src_C2, dim=0))
-            tgt_C2s = softmax(torch.stack(tgt_C2, dim=0))
-
-            mse2 = ((tgt_C2s - src_C2s) ** 2)
-            wt = torch.sqrt(mse2.detach()) / torch.max(torch.sqrt(mse2.detach()))
-            within_loss2 = (mse2 * wt).mean() * args.a2agr_wt
-        else:
-            within_loss2 = 0
-
-        # 论文中公式4
-        within_loss = within_loss1 + within_loss2
-        loss_dict['within'] = within_loss
-
         # warp reg
         warp_loss = 0.
         for flow in warp_flows:
@@ -398,14 +354,14 @@ if __name__ == '__main__':
         warp_loss *= args.warp_wt
         loss_dict['warp_loss'] = warp_loss
 
-        loss = cross_loss + within_loss + warp_loss + g_loss
+        loss = cross_loss + warp_loss + g_loss
         loss_dict['loss'] = loss
         wandb.log(loss_dict)
         g_optim.zero_grad()
         loss.backward()
         g_optim.step()
 
-        del cross_loss, within_loss, warp_loss, g_loss
+        del cross_loss, warp_loss, g_loss
 
         g_regularize = idx % 10 == 0
         if g_regularize:

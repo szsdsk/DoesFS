@@ -37,9 +37,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     source_dir = 'images/test_inputs'
     loss = []
-    for i in range(1, 8):
-        target_dir = os.path.join('images', args.input_folder, f'target{i}')
-
+    for i in range(2, 3):
         ground_source = os.path.join('images/ground_truth', f'source{i}.png')
         ground_target = os.path.join('images/ground_truth', f'target{i}.png')
 
@@ -47,16 +45,22 @@ if __name__ == '__main__':
         target_feature = get_features(ground_target)
         ground_d = target_feature - source_feature
         ground_d /= np.linalg.norm(ground_d)
-        print(ground_source, ground_target)
 
-        total = 0.0
-        pairs = get_paired_image_paths(source_dir, target_dir)
-        for s, t in pairs:
-            source = get_features(s)
-            target = get_features(t)
-            d = target - source
-            d /= np.linalg.norm(d)
-            cosine = np.dot(d, ground_d) / (np.linalg.norm(d) * np.linalg.norm(ground_d))
-            total += cosine
-        loss.append(float(Decimal(str(total / len(pairs))).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)))
-    print(loss)
+        inputs_folder = ['DoesFS', 'DiFa', 'jojoGAN', 'MTG', 'oneshotCLIP', 'jojoGAN_pair', 'MTG_pair']
+        for input_folder in inputs_folder:
+            total = 0.0
+            target_dir = os.path.join('images', input_folder, f'style{i}')
+            pairs = get_paired_image_paths(source_dir, target_dir)
+            losses = []
+            for s, t in pairs:
+                source = get_features(s)
+                target = get_features(t)
+                d = target - source
+                d /= np.linalg.norm(d)
+                cosine = np.dot(d, ground_d) / (np.linalg.norm(d) * np.linalg.norm(ground_d))
+                total += cosine
+                losses.append(cosine)
+            print(losses)
+            print(input_folder + ': ' + str(float(Decimal(str(total / len(pairs))).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))))
+    #         loss.append(float(Decimal(str(total / len(pairs))).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)))
+    # print(loss)

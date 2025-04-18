@@ -321,9 +321,6 @@ if __name__ == '__main__':
         # 都是 batch_size 张图片
         img_g, warp_flows = generator(in_latent, input_is_latent=True, stns=stns, rt_stns=rt_stns)
         fake_pred = discriminator(img_g, extra=extra, flag=1, p_ind=np.random.randint(0, hp))
-        # -log(D_patch(G(w))) 公式5
-        g_loss = g_nonsaturating_loss(fake_pred) * args.adv_wt
-        loss_dict['g_loss'] = g_loss
 
         # cross-domain loss
         with torch.no_grad():
@@ -398,14 +395,14 @@ if __name__ == '__main__':
         warp_loss *= args.warp_wt
         loss_dict['warp_loss'] = warp_loss
 
-        loss = cross_loss + within_loss + warp_loss + g_loss
+        loss = cross_loss + within_loss + warp_loss
         loss_dict['loss'] = loss
         wandb.log(loss_dict)
         g_optim.zero_grad()
         loss.backward()
         g_optim.step()
 
-        del cross_loss, within_loss, warp_loss, g_loss
+        del cross_loss, within_loss, warp_loss
 
         g_regularize = idx % 10 == 0
         if g_regularize:

@@ -15,3 +15,6 @@ outputs/*
 run.py
 images/
 images/*
+temp.py
+data
+data/*

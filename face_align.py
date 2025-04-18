@@ -130,7 +130,7 @@ def align_face(filepath, output_size=1024, enable_padding=True):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path', type=str, default='./data/test_inputs/001.png')
+    parser.add_argument('--path', type=str, default='./data/test_inputs/012.png')
     parser.add_argument('--output', type=str, default='./outputs/aligned')
     args = parser.parse_args()
 
