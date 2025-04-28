@@ -18,3 +18,5 @@ images/*
 temp.py
 data
 data/*
+concat.py
+inference_all_styles.py
